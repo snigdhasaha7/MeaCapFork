@@ -25,6 +25,7 @@ class CLIP(nn.Module):
             print('Cuda is available.')
             print('Device is {}'.format(self.device))
         else:
+            device = "cpu"
             print('Cuda is not available.')
             print('Device is {}'.format(self.device))
 
