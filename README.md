@@ -85,6 +85,16 @@ If you think MeaCap is useful, please cite this paper!
 
 ### Environment
 Prepare the python environment:
+
+First create a new Python environment with Python 3.10: 
+```
+conda create --name meacap python=3.10 
+```
+Then, install torch as follows:
+```
+pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118
+```
+Then install the rest of the requirements:
 ```
 pip install -r requirements.txt
 ```
