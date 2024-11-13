@@ -28,9 +28,9 @@ def get_args():
     ## DATA/MODEL PATH ##
     parser.add_argument('--img_path', type=str, default=r'./image_example')
     parser.add_argument('--output_path', type=str, default=r'./outputs')
-    parser.add_argument('--vl_model', type=str, default=r'G:/HuggingFace/clip-vit-base-patch32')
-    parser.add_argument("--parser_checkpoint", type=str, default=r'G:/HuggingFace/flan-t5-base-VG-factual-sg')
-    parser.add_argument("--wte_model_path", type=str, default=r'G:/HuggingFace/all-Mini-L6-v2')
+    parser.add_argument('--vl_model', type=str, default=r'openai/clip-vit-base-patch32')
+    parser.add_argument("--parser_checkpoint", type=str, default=r'lizhuang144/flan-t5-base-VG-factual-sg')
+    parser.add_argument("--wte_model_path", type=str, default=r'sentence-transformers/all-Mini-L6-v2')
     parser.add_argument("--lm_model_path", type=str, default=r'F:/ImageText/MeaCap-family/pretrain_model/CBART_COCO')
 
     ## lANGUAGE MODEL CBART ##
