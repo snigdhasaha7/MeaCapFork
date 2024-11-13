@@ -81,7 +81,6 @@ def calculate_clip_score(meacap_preds):
     # Initialize CLIP model
     device = "cuda" if torch.cuda.is_available() else "cpu"
     clip_model = CLIP(r'openai/clip-vit-base-patch32')
-    clip_model.device = 'cpu'
     clip_model.eval()
     clip_model.to(device)
     
@@ -108,10 +107,10 @@ def main():
     meacap_preds, gt_data = load_jsons()
     
     # Prepare data for metrics
-    # gts, res = prepare_data_for_metrics(meacap_preds, gt_data)
+    gts, res = prepare_data_for_metrics(meacap_preds, gt_data)
     
     # # Calculate metrics
-    # metrics = calculate_metrics(gts, res)
+    metrics = calculate_metrics(gts, res)
     
     # Calculate CLIP score
     clip_score = calculate_clip_score(meacap_preds)
