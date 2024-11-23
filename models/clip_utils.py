@@ -103,6 +103,29 @@ class CLIP(nn.Module):
         text_embeds = text_outputs[1]
         text_embeds = self.model.text_projection(text_embeds)
         return text_embeds
+    
+    def compute_image_image_similarity_via_embeddings(self, query_image_path, candidate_image_paths, top_k=5):
+        query_image = Image.open(query_image_path)
+        query_inputs = self.processor(images=query_image, return_tensors="pt")
+        with torch.no_grad():
+            query_embedding = self.model.get_image_features(**query_inputs)
+
+        candidate_embeddings = []
+        for image_path in candidate_image_paths:
+            image = Image.open(image_path)
+            inputs = self.processor(images=image, return_tensors="pt")
+            with torch.no_grad():
+                embedding = self.model.get_image_features(**inputs)
+            candidate_embeddings.append(embedding)
+
+        candidate_embeddings = torch.stack(candidate_embeddings).squeeze()
+        similarity_scores = torch.nn.functional.cosine_similarity(
+            query_embedding, candidate_embeddings, dim=-1
+        )
+
+        top_k_indices = torch.topk(similarity_scores, top_k).indices
+        top_k_image_paths = [candidate_image_paths[i] for i in top_k_indices]
+        return top_k_image_paths
 
     def compute_image_text_similarity_via_embeddings(self, image_embeds, text_embeds):
         '''
