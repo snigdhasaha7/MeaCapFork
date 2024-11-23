@@ -9,7 +9,7 @@ from args import get_args
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel
 from sentence_transformers import SentenceTransformer
 
-from models.clip_utils import CLIP, compute_image_image_similarity_via_embeddings
+from models.clip_utils import CLIP, compute_image_image_similarity_via_embeddings  # Ensure this exists
 import json
 import copy
 
@@ -47,6 +47,33 @@ def compute_top_n_texts(image_embedding, memory_embeddings, memory_captions, top
     return [memory_captions[idx] for idx in top_n_indices]
 
 
+class LLMRefiner:
+    """
+    A class to refine captions iteratively using an LLM.
+    """
+    def __init__(self, llm_model, tokenizer):
+        self.llm_model = llm_model
+        self.tokenizer = tokenizer
+
+    def refine_captions(self, captions):
+        """
+        Use the LLM to refine a list of captions.
+        Args:
+            captions: List of captions to refine.
+        Returns:
+            Refined captions.
+        """
+        refined_captions = []
+        for caption in captions:
+            prompt = f"Improve the caption: '{caption}'."
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm_model.device)
+            with torch.no_grad():
+                outputs = self.llm_model.generate(**inputs, max_new_tokens=50)
+            refined_caption = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            refined_captions.append(refined_caption)
+        return refined_captions
+
+
 if __name__ == "__main__":
     args = get_args()
     set_seed(args)
@@ -67,21 +94,13 @@ if __name__ == "__main__":
     logger.logger.info(f'The log file is {log_path}')
     logger.logger.info(args)
 
-    ## Load the pre-trained models and tokenizer
+    ## Load models
     tokenizer = BartTokenizer.from_pretrained(args.lm_model_path)
     lm_model = BartForTextInfill.from_pretrained(args.lm_model_path).to(device)
-    logger.logger.info('Load BartForTextInfill from the checkpoint {}.'.format(args.lm_model_path))
-
     vl_model = CLIP(args.vl_model).to(device)
-    logger.logger.info('Load CLIP from the checkpoint {}.'.format(args.vl_model))
-
-    sim_func = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
-    wte_model = SentenceTransformer(args.wte_model_path)
-    logger.logger.info('Load sentenceBERT from the checkpoint {}.'.format(args.wte_model_path))
-
+    wte_model = SentenceTransformer(args.wte_model_path).to(device)
     parser_tokenizer = AutoTokenizer.from_pretrained(args.parser_checkpoint)
     parser_model = AutoModelForSeq2SeqLM.from_pretrained(args.parser_checkpoint).eval().to(device)
-    logger.logger.info('Load Textual Scene Graph parser from the checkpoint {}.'.format(args.parser_checkpoint))
 
     ## Dataset loading
     if args.use_memory:
@@ -91,17 +110,16 @@ if __name__ == "__main__":
         img_data = Imgdata(dir_path=args.img_path, match_model=vl_model)
         train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img, shuffle=False, drop_last=False)
 
-    ## Load textual memory bank
+    ## Memory bank setup
     if args.use_memory:
         memory_caption_path = os.path.join(f"data/memory/{memory_id}", "memory_captions.json")
         memory_clip_embedding_file = os.path.join(f"data/memory/{memory_id}", "memory_clip_embeddings.pt")
         memory_captions = json.load(open(memory_caption_path, 'r'))
         memory_clip_embeddings = torch.load(memory_clip_embedding_file)
 
-    # Check if retrieval needs to be on CPU
+    # Handle large memory banks
     if memory_id in ['cc3m', 'ss1m']:
         retrieve_on_CPU = True
-        print('Memory is too large, moving to CPU...')
         vl_model_retrieve = copy.deepcopy(vl_model).to(cpu_device)
         memory_clip_embeddings = memory_clip_embeddings.to(cpu_device)
     else:
@@ -113,34 +131,24 @@ if __name__ == "__main__":
         start = time.time()
         logger.logger.info(f'{batch_idx + 1}/{len(train_loader)}, image name: {batch_name_list[0]}')
 
-        # Step 1: Retrieve top-k similar images
+        # Top-k image retrieval
         top_k_image_paths = vl_model_retrieve.compute_image_image_similarity_via_embeddings(
             query_image_path=batch_img_list[0],
             candidate_image_paths=img_data.get_all_image_paths(),
             top_k=args.top_k
         )
 
-        # Step 2: Retrieve top-N texts for each top-k image
+        # Retrieve top-N captions
         all_retrieved_texts = []
         for image_path in top_k_image_paths:
-            if retrieve_on_CPU:
-                memory_embeddings_cpu = memory_clip_embeddings.to(cpu_device)
-                top_n_texts = compute_top_n_texts(
-                    image_embedding=vl_model_retrieve.get_clip_embedding(image_path),
-                    memory_embeddings=memory_embeddings_cpu,
-                    memory_captions=memory_captions,
-                    top_n=args.memory_caption_num
-                )
-            else:
-                top_n_texts = compute_top_n_texts(
-                    image_embedding=vl_model.get_clip_embedding(image_path),
-                    memory_embeddings=memory_clip_embeddings,
-                    memory_captions=memory_captions,
-                    top_n=args.memory_caption_num
-                )
+            top_n_texts = compute_top_n_texts(
+                image_embedding=vl_model.get_clip_embedding(image_path),
+                memory_embeddings=memory_clip_embeddings,
+                memory_captions=memory_captions,
+                top_n=args.memory_caption_num
+            )
             all_retrieved_texts.extend(top_n_texts)
 
-        # Step 3: Retrieve top-N texts for the query image
         query_texts = compute_top_n_texts(
             image_embedding=batch_image_embeds,
             memory_embeddings=memory_clip_embeddings,
@@ -149,13 +157,13 @@ if __name__ == "__main__":
         )
         all_retrieved_texts.extend(query_texts)
 
-        # Combine results
-        result_dict[os.path.splitext(batch_name_list[0])[0]] = all_retrieved_texts
-        used_time = time.time() - start
-        logger.logger.info(f'Completed in {used_time}s')
+        # Combine and refine
+        llm_refiner = LLMRefiner(llm_model=lm_model, tokenizer=tokenizer)
+        refined_captions = llm_refiner.refine_captions(all_retrieved_texts)
+        result_dict[os.path.splitext(batch_name_list[0])[0]] = refined_captions
 
-    if not os.path.exists(args.output_path):
-        os.makedirs(args.output_path)
+        logger.logger.info(f'Completed processing image: {batch_name_list[0]} in {time.time() - start:.2f}s.')
+
     save_file = os.path.join(args.output_path, save_file)
     with open(save_file, 'w', encoding="utf-8") as f:
         json.dump(result_dict, f, indent=2)
