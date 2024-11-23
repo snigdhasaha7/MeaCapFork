@@ -52,6 +52,23 @@ class CLIP(nn.Module):
         image_embeds = self.model.visual_projection(image_embeds)  # [1 x embed_dim]
         return image_embeds
 
+    def get_clip_embedding(self, image_path):
+        """
+        Compute the CLIP embedding for a given image.
+
+        Args:
+            image_path (str): Path to the image.
+
+        Returns:
+            torch.Tensor: The CLIP embedding of the image.
+        """
+        image = Image.open(image_path).convert("RGB")
+        inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+
+        with torch.no_grad():
+            image_embedding = self.model.get_image_features(**inputs)
+        return image_embedding
+
     def compute_image_representation_from_image_instance(self, image):
         if not self.cuda_has_been_checked:
             self.check_cuda()

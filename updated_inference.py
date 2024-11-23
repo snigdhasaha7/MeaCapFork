@@ -9,7 +9,7 @@ from args import get_args
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel
 from sentence_transformers import SentenceTransformer
 
-from models.clip_utils import CLIP, compute_image_image_similarity_via_embeddings  # Updated import
+from models.clip_utils import CLIP, compute_image_image_similarity_via_embeddings
 import json
 import copy
 
@@ -29,6 +29,24 @@ from utils.detect_utils import retrieve_concepts
 from utils.generate_utils_ import Get_shuffle_score, filter_text
 
 
+def compute_top_n_texts(image_embedding, memory_embeddings, memory_captions, top_n):
+    """
+    Compute the top-N textual descriptions for a given image embedding.
+    Args:
+        image_embedding: Embedding of the image (tensor).
+        memory_embeddings: All memory embeddings (tensor).
+        memory_captions: List of captions corresponding to memory embeddings.
+        top_n: Number of top captions to retrieve.
+    Returns:
+        A list of top-N captions.
+    """
+    similarity_scores = torch.nn.functional.cosine_similarity(
+        image_embedding, memory_embeddings, dim=-1
+    )
+    top_n_indices = torch.topk(similarity_scores, top_n).indices
+    return [memory_captions[idx] for idx in top_n_indices]
+
+
 if __name__ == "__main__":
     args = get_args()
     set_seed(args)
@@ -36,7 +54,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     cpu_device = torch.device("cpu")
 
-    ## update logger
+    ## Update logger
     memory_id = args.memory_id
     test_datasets = args.img_path.split("/")[-1]
     lm_training_datasets = args.lm_model_path.split("/")[-1]
@@ -49,28 +67,23 @@ if __name__ == "__main__":
     logger.logger.info(f'The log file is {log_path}')
     logger.logger.info(args)
 
-    ## load the pre-trained model and tokenizer
+    ## Load the pre-trained models and tokenizer
     tokenizer = BartTokenizer.from_pretrained(args.lm_model_path)
-    lm_model = BartForTextInfill.from_pretrained(args.lm_model_path)
-    lm_model = lm_model.to(device)
+    lm_model = BartForTextInfill.from_pretrained(args.lm_model_path).to(device)
     logger.logger.info('Load BartForTextInfill from the checkpoint {}.'.format(args.lm_model_path))
 
-    vl_model = CLIP(args.vl_model)
-    vl_model = vl_model.to(device)
+    vl_model = CLIP(args.vl_model).to(device)
     logger.logger.info('Load CLIP from the checkpoint {}.'.format(args.vl_model))
 
     sim_func = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
     wte_model = SentenceTransformer(args.wte_model_path)
     logger.logger.info('Load sentenceBERT from the checkpoint {}.'.format(args.wte_model_path))
 
-    # parser model for memory concepts extracting
     parser_tokenizer = AutoTokenizer.from_pretrained(args.parser_checkpoint)
-    parser_model = AutoModelForSeq2SeqLM.from_pretrained(args.parser_checkpoint)
-    parser_model.eval()
-    parser_model.to(device)
+    parser_model = AutoModelForSeq2SeqLM.from_pretrained(args.parser_checkpoint).eval().to(device)
     logger.logger.info('Load Textual Scene Graph parser from the checkpoint {}.'.format(args.parser_checkpoint))
 
-    # datasets
+    ## Dataset loading
     if args.use_memory:
         img_data = Imgdata_img_return(dir_path=args.img_path, match_model=vl_model)
         train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img_img_return, shuffle=False, drop_last=False)
@@ -78,60 +91,22 @@ if __name__ == "__main__":
         img_data = Imgdata(dir_path=args.img_path, match_model=vl_model)
         train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img, shuffle=False, drop_last=False)
 
-    stop_tokens_tensor = torch.zeros(tokenizer.vocab_size).to(device)
-    sub_tokens_tensor = torch.zeros(tokenizer.vocab_size).to(device)
-    if 'bart' in tokenizer.__class__.__name__.lower():
-        filename = 'data/tokens/bart_stop_tokens.txt'
-        index = 0
-        with open(filename, 'r') as fr:
-            for line in fr:
-                words = line.strip().split()
-                token_id = int(words[0])
-                stop_tokens_tensor[token_id] = 1
-                index += 1
-        print('Loading {} stop tokens from {} for {}.'.format(index, filename, tokenizer.__class__.__name__))
-
-        # load sub tokens
-        filename = 'data/tokens/bart_sub_tokens.txt'
-        index = 0
-        with open(filename, 'r') as fr:
-            for line in fr:
-                words = line.strip().split()
-                token_id = int(words[0])
-                sub_tokens_tensor[token_id] = 1
-                index += 1
-        print('Loading {} sub tokens from {} for {}.'.format(index, filename, tokenizer.__class__.__name__))
-
-    if args.decoder_chain > 1:
-        try:
-            rank_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-            rank_model = GPT2LMHeadModel.from_pretrained('gpt2')
-            logger.logger.info('Initialize GPT2 with default parameters.')
-        except:
-            raise ValueError('can not load models.')
-        rank_lm = LanguageModel(device, rank_model, rank_tokenizer)
-    else:
-        rank_lm = None
-
     ## Load textual memory bank
     if args.use_memory:
-        memory_caption_path = os.path.join(f"data/memory/{memory_id}","memory_captions.json")
-        memory_clip_embedding_file = os.path.join(f"data/memory/{memory_id}","memory_clip_embeddings.pt")
-        memory_wte_embedding_file = os.path.join(f"data/memory/{memory_id}","memory_wte_embeddings.pt")
+        memory_caption_path = os.path.join(f"data/memory/{memory_id}", "memory_captions.json")
+        memory_clip_embedding_file = os.path.join(f"data/memory/{memory_id}", "memory_clip_embeddings.pt")
+        memory_captions = json.load(open(memory_caption_path, 'r'))
         memory_clip_embeddings = torch.load(memory_clip_embedding_file)
-        memory_wte_embeddings = torch.load(memory_wte_embedding_file)
-        with open(memory_caption_path, 'r') as f:
-            memory_captions = json.load(f)
 
-    # huge memory bank cannot load on GPU
-    if memory_id == 'cc3m' or memory_id == 'ss1m':
+    # Check if retrieval needs to be on CPU
+    if memory_id in ['cc3m', 'ss1m']:
         retrieve_on_CPU = True
-        print('CC3M/SS1M Memory is too big to compute on RTX 3090, Moving to CPU...')
+        print('Memory is too large, moving to CPU...')
         vl_model_retrieve = copy.deepcopy(vl_model).to(cpu_device)
         memory_clip_embeddings = memory_clip_embeddings.to(cpu_device)
     else:
-        vl_model_retrieve = vl_model
         retrieve_on_CPU = False
+        vl_model_retrieve = vl_model
 
     result_dict = {}
     for batch_idx, (batch_image_embeds, batch_name_list, batch_img_list) in enumerate(train_loader):
@@ -139,7 +114,7 @@ if __name__ == "__main__":
         logger.logger.info(f'{batch_idx + 1}/{len(train_loader)}, image name: {batch_name_list[0]}')
 
         # Step 1: Retrieve top-k similar images
-        top_k_image_paths = compute_image_image_similarity_via_embeddings(
+        top_k_image_paths = vl_model_retrieve.compute_image_image_similarity_via_embeddings(
             query_image_path=batch_img_list[0],
             candidate_image_paths=img_data.get_all_image_paths(),
             top_k=args.top_k
@@ -148,20 +123,39 @@ if __name__ == "__main__":
         # Step 2: Retrieve top-N texts for each top-k image
         all_retrieved_texts = []
         for image_path in top_k_image_paths:
-            top_n_texts = vl_model.compute_top_n_texts(image_path, memory_clip_embeddings, top_n=args.memory_caption_num)
+            if retrieve_on_CPU:
+                memory_embeddings_cpu = memory_clip_embeddings.to(cpu_device)
+                top_n_texts = compute_top_n_texts(
+                    image_embedding=vl_model_retrieve.get_clip_embedding(image_path),
+                    memory_embeddings=memory_embeddings_cpu,
+                    memory_captions=memory_captions,
+                    top_n=args.memory_caption_num
+                )
+            else:
+                top_n_texts = compute_top_n_texts(
+                    image_embedding=vl_model.get_clip_embedding(image_path),
+                    memory_embeddings=memory_clip_embeddings,
+                    memory_captions=memory_captions,
+                    top_n=args.memory_caption_num
+                )
             all_retrieved_texts.extend(top_n_texts)
 
         # Step 3: Retrieve top-N texts for the query image
-        query_image_texts = vl_model.compute_top_n_texts(batch_img_list[0], memory_clip_embeddings, top_n=args.memory_caption_num)
-        all_retrieved_texts.extend(query_image_texts)
+        query_texts = compute_top_n_texts(
+            image_embedding=batch_image_embeds,
+            memory_embeddings=memory_clip_embeddings,
+            memory_captions=memory_captions,
+            top_n=args.memory_caption_num
+        )
+        all_retrieved_texts.extend(query_texts)
 
-        # Combine and save results
+        # Combine results
         result_dict[os.path.splitext(batch_name_list[0])[0]] = all_retrieved_texts
         used_time = time.time() - start
-        logger.logger.info(f'using {used_time}s')
+        logger.logger.info(f'Completed in {used_time}s')
 
     if not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
     save_file = os.path.join(args.output_path, save_file)
-    with open(save_file, 'w', encoding="utf-8") as _json:
-        json.dump(result_dict, _json, indent=2)
+    with open(save_file, 'w', encoding="utf-8") as f:
+        json.dump(result_dict, f, indent=2)
