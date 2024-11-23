@@ -143,6 +143,20 @@ class CLIP(nn.Module):
         top_k_indices = torch.topk(similarity_scores, top_k).indices
         top_k_image_paths = [candidate_image_paths[i] for i in top_k_indices]
         return top_k_image_paths
+    
+    def compute_scores(self, image_path, captions):
+        """
+        Compute CLIP similarity scores between an image and a list of captions.
+        Args:
+            image_path: Path to the query image.
+            captions: List of textual captions.
+        Returns:
+            Tensor of similarity scores.
+        """
+        image_embedding = self.get_clip_embedding(image_path)
+        text_embeddings = torch.stack([self.compute_text_representation([caption]).squeeze(0) for caption in captions])
+        scores = torch.nn.functional.cosine_similarity(image_embedding, text_embeddings, dim=-1)
+        return scores
 
     def compute_image_text_similarity_via_embeddings(self, image_embeds, text_embeds):
         '''
