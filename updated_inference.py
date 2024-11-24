@@ -94,7 +94,7 @@ if __name__ == "__main__":
 
         # Step 1: Retrieve top-k images
         top_k_image_paths = vl_model.compute_image_image_similarity_via_embeddings(
-            query_image_path=batch_img_list[0],
+            query_image_path=os.path.join(args.img_path, batch_name_list[0]),
             candidate_image_paths=img_data.get_all_image_paths(),
             top_k=args.top_k
         )
@@ -108,7 +108,7 @@ if __name__ == "__main__":
             all_retrieved_texts.extend(top_n_captions)
 
         # Step 3: Score captions for the query image
-        query_scores = vl_model.compute_scores(batch_img_list[0], memory_captions)
+        query_scores = vl_model.compute_scores(os.path.join(args.img_path, batch_name_list[0]), memory_captions)
         query_top_n_indices = torch.topk(query_scores, args.memory_caption_num).indices
         query_captions = [memory_captions[idx] for idx in query_top_n_indices]
         all_retrieved_texts.extend(query_captions)

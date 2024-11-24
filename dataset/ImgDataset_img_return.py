@@ -20,6 +20,9 @@ class Imgdata_img_return(Dataset):
     def __len__(self):
         return len(self.img_name_list)
 
+    def get_all_image_paths(self):
+        return [os.path.join(self.dir_path, img_name) for img_name in self.img_name_list]
+
 
 def collate_img_img_return(batch_data):
     img_embeds_batch_list = list()

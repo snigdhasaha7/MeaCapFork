@@ -124,6 +124,7 @@ class CLIP(nn.Module):
     def compute_image_image_similarity_via_embeddings(self, query_image_path, candidate_image_paths, top_k=5):
         query_image = Image.open(query_image_path)
         query_inputs = self.processor(images=query_image, return_tensors="pt")
+        query_inputs.to(self.device)
         with torch.no_grad():
             query_embedding = self.model.get_image_features(**query_inputs)
 
@@ -131,6 +132,7 @@ class CLIP(nn.Module):
         for image_path in candidate_image_paths:
             image = Image.open(image_path)
             inputs = self.processor(images=image, return_tensors="pt")
+            inputs.to(self.device)
             with torch.no_grad():
                 embedding = self.model.get_image_features(**inputs)
             candidate_embeddings.append(embedding)
