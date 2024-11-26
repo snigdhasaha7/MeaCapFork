@@ -52,6 +52,10 @@ class LLMRefiner:
             previous_caption = ""
             for _ in range(self.max_iterations):
                 prompt = f"Improve the caption: '{current_caption}'."
+                # message = [
+                #     {"role": "system", "content": "You are a refiner model. Use your knowledge to refine this caption."},
+                #     {"role": "user", "content": prompt}
+                #     ]
                 inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm_model.device)
                 with torch.no_grad():
                     outputs = self.llm_model.generate(**inputs, max_length=50)
@@ -119,26 +123,23 @@ if __name__ == "__main__":
     logger.logger.info('Load Textual Scene Graph parser from the checkpoint {}.'.format(args.parser_checkpoint))
 
     ## Precompute and load embeddings
-    embedding_save_path = os.path.join(args.output_path, f"{memory_id}_embeddings.pt")
-    img_data = Imgdata(dir_path=args.img_path, match_model=vl_model)
+    embedding_save_path = os.path.join(args.embedding_path, f"{memory_id}_embeddings.pt")
     if not os.path.exists(embedding_save_path):
-        logger.logger.info(f"Precomputing embeddings for images in {args.img_path}.")
-        image_paths = img_data.get_all_image_paths()
+        embedding_data = Imgdata(dir_path=args.embedding_img_path, match_model=vl_model)
+        logger.logger.info(f"Precomputing embeddings for images in {args.embedding_img_path}.")
+        image_paths = embedding_data.get_all_image_paths()
         vl_model.save_image_embeddings(image_paths, embedding_save_path)
     else:
         logger.logger.info(f"Loading precomputed embeddings from {embedding_save_path}.")
     candidate_embeddings = vl_model.load_image_embeddings(embedding_save_path)
 
-    ## Dataset loading
-    train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img, shuffle=False, drop_last=False)
-
-    ## Dataset loading
-    # if args.use_memory:
-    #     img_data = Imgdata_img_return(dir_path=args.img_path, match_model=vl_model)
-    #     train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img_img_return, shuffle=False, drop_last=False)
-    # else:
-    #     img_data = Imgdata(dir_path=args.img_path, match_model=vl_model)
-    #     train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img, shuffle=False, drop_last=False)
+    # Dataset loading
+    if args.use_memory:
+        img_data = Imgdata_img_return(dir_path=args.img_path, match_model=vl_model)
+        train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img_img_return, shuffle=False, drop_last=False)
+    else:
+        img_data = Imgdata(dir_path=args.img_path, match_model=vl_model)
+        train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img, shuffle=False, drop_last=False)
 
     stop_tokens_tensor = torch.zeros(tokenizer.vocab_size).to(device)
     sub_tokens_tensor = torch.zeros(tokenizer.vocab_size).to(device)
@@ -226,7 +227,8 @@ if __name__ == "__main__":
         top_k_embeddings, query_embedding = vl_model.compute_image_image_similarity_via_embeddings(
             query_image_path=os.path.join(args.img_path, batch_name_list[0]),
             candidate_image_paths=img_data.get_all_image_paths(),
-            top_k=1
+            top_k=1,
+            embedding_path=embedding_save_path
         )
         logger.logger.info(f"Retrieved top-{1} images")
 
@@ -235,7 +237,7 @@ if __name__ == "__main__":
         masked_sentences = set()
         select_memory_wte_embeddings  = []
         for image_embed in top_k_embeddings:
-            embed = torch.unsqueeze(image_embed, 0)
+            embed = image_embed.unsqueeze(dim=0)
             mask, memory_embeddings = generate_concepts(embed, memory_clip_embeddings)
             masked_sentences.update(mask)
             select_memory_wte_embeddings.extend(memory_embeddings)
@@ -303,9 +305,9 @@ if __name__ == "__main__":
         logger.logger.info(f'Refining captions iteratively')
         refined_caption = llm_refiner.refine_captions([best_text])
 
-        logger.logger.info(f'Refined caption: {refined_caption}')
+        logger.logger.info(f'Refined caption: {refined_caption[0]}')
 
-        result_dict[os.path.splitext(batch_name_list[0])[0]] = refined_caption
+        result_dict[os.path.splitext(batch_name_list[0])[0]] = refined_caption[0]
 
         logger.logger.info(f'Processed image: {batch_name_list[0]} in {time.time() - start:.2f}s.')
 

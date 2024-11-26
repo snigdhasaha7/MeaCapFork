@@ -1,5 +1,6 @@
 import torch
 import requests
+import os
 from torch import nn
 from PIL import Image
 
@@ -25,7 +26,7 @@ class CLIP(nn.Module):
             print('Cuda is available.')
             print('Device is {}'.format(self.device))
         else:
-            device = "cpu"
+            self.device = "cpu"
             print('Cuda is not available.')
             print('Device is {}'.format(self.device))
 
@@ -145,6 +146,8 @@ class CLIP(nn.Module):
         if embedding_path and os.path.exists(embedding_path):
             print(f"Loading precomputed embeddings from {embedding_path}.")
             candidate_embeddings = torch.load(embedding_path)
+            candidate_embeddings.to(self.device)
+            candidate_embeddings = candidate_embeddings.squeeze()
         else:
             candidate_embeddings = []
             for image_path in candidate_image_paths:
@@ -177,6 +180,9 @@ class CLIP(nn.Module):
         if os.path.exists(embedding_path):
             print(f"Embeddings already exist at {embedding_path}. Skipping computation.")
             return
+        if not self.cuda_has_been_checked:
+            self.check_cuda()
+            self.cuda_has_been_checked = True
 
         embeddings = []
         for image_path in image_paths:

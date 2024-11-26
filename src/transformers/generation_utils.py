@@ -535,8 +535,8 @@ class GenerationMixin:
             )
 
             # if model has past, then set the past variable to speed up decoding
-            # if self._use_cache(outputs, use_cache):
-            #     past = outputs[1]
+            if self._use_cache(outputs, use_cache):
+                past = outputs[1]
 
             if do_sample:
                 # Temperature (higher temperature => more likely to sample low probability tokens)

@@ -26,7 +26,9 @@ def get_args():
     parser.add_argument("--memory_caption_num", type=int, default=5)
 
     ## DATA/MODEL PATH ##
+    parser.add_argument('--embedding_img_path', type=str, default=r'./data/coco/karpathy_test/images/val2014/val2014')
     parser.add_argument('--img_path', type=str, default=r'./image_example')
+    parser.add_argument('--embedding_path', type=str, default=r'./data/coco/karpathy_test/images')
     parser.add_argument('--output_path', type=str, default=r'./outputs')
     parser.add_argument('--vl_model', type=str, default=r'openai/clip-vit-base-patch32')
     parser.add_argument("--parser_checkpoint", type=str, default=r'lizhuang144/flan-t5-base-VG-factual-sg')
