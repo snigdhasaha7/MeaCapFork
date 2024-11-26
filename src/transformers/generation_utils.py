@@ -516,7 +516,7 @@ class GenerationMixin:
             model_inputs = self.prepare_inputs_for_generation(
                 input_ids, past=past, attention_mask=attention_mask, use_cache=use_cache, **model_specific_kwargs
             )
-
+            
             outputs = self(**model_inputs)
             next_token_logits = outputs[0][:, -1, :]
 
@@ -535,8 +535,8 @@ class GenerationMixin:
             )
 
             # if model has past, then set the past variable to speed up decoding
-            if self._use_cache(outputs, use_cache):
-                past = outputs[1]
+            # if self._use_cache(outputs, use_cache):
+            #     past = outputs[1]
 
             if do_sample:
                 # Temperature (higher temperature => more likely to sample low probability tokens)

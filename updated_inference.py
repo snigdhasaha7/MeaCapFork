@@ -49,7 +49,8 @@ class LLMRefiner:
             prompt = f"Improve the caption: '{caption}'."
             inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm_model.device)
             with torch.no_grad():
-                outputs = self.llm_model.generate(**inputs, max_new_tokens=50)
+                outputs = self.llm_model.generate(**inputs, max_length=50)
+            print(outputs.shape)
             refined_caption = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             refined_captions.append(refined_caption)
         return refined_captions
@@ -266,7 +267,7 @@ if __name__ == "__main__":
         # Step 4: Refine captions iteratively
         llm_refiner = LLMRefiner(llm_model=lm_model, tokenizer=tokenizer)
         logger.logger.info(f'Refining captions iteratively')
-        refined_caption = llm_refiner.refine_captions(best_text)
+        refined_caption = llm_refiner.refine_captions([best_text])
 
         logger.logger.info(f'Refined caption: {refined_caption}')
 
