@@ -96,13 +96,27 @@ if __name__ == "__main__":
     parser_model.to(device)
     logger.logger.info('Load Textual Scene Graph parser from the checkpoint {}.'.format(args.parser_checkpoint))
 
-    ## Dataset loading
-    if args.use_memory:
-        img_data = Imgdata_img_return(dir_path=args.img_path, match_model=vl_model)
-        train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img_img_return, shuffle=False, drop_last=False)
+    ## Precompute and load embeddings
+    embedding_save_path = os.path.join(args.output_path, f"{memory_id}_embeddings.pt")
+    img_data = Imgdata(dir_path=args.img_path, match_model=vl_model)
+    if not os.path.exists(embedding_save_path):
+        logger.logger.info(f"Precomputing embeddings for images in {args.img_path}.")
+        image_paths = img_data.get_all_image_paths()
+        vl_model.save_image_embeddings(image_paths, embedding_save_path)
     else:
-        img_data = Imgdata(dir_path=args.img_path, match_model=vl_model)
-        train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img, shuffle=False, drop_last=False)
+        logger.logger.info(f"Loading precomputed embeddings from {embedding_save_path}.")
+    candidate_embeddings = vl_model.load_image_embeddings(embedding_save_path)
+
+    ## Dataset loading
+    train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img, shuffle=False, drop_last=False)
+
+    ## Dataset loading
+    # if args.use_memory:
+    #     img_data = Imgdata_img_return(dir_path=args.img_path, match_model=vl_model)
+    #     train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img_img_return, shuffle=False, drop_last=False)
+    # else:
+    #     img_data = Imgdata(dir_path=args.img_path, match_model=vl_model)
+    #     train_loader = DataLoader(img_data, batch_size=args.batch_size, collate_fn=collate_img, shuffle=False, drop_last=False)
 
     stop_tokens_tensor = torch.zeros(tokenizer.vocab_size).to(device)
     sub_tokens_tensor = torch.zeros(tokenizer.vocab_size).to(device)
@@ -259,8 +273,6 @@ if __name__ == "__main__":
             gen_text[0] = gen_text[0].lower().capitalize()
             best_text = gen_text[0]
         
-
-
         logger.logger.info(f'Best caption pre-refine: {best_text}')
 
         # Step 4: Refine captions iteratively
