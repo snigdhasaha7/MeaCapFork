@@ -32,13 +32,15 @@ class LLMRefiner:
     """
     A class to refine captions iteratively using an LLM.
     """
-    def __init__(self, llm_model, tokenizer):
+    def __init__(self, llm_model, tokenizer, max_iterations=5, tolerance=0.01):
         self.llm_model = llm_model
         self.tokenizer = tokenizer
+        self.max_iterations = max_iterations
+        self.tolerance = tolerance
 
     def refine_captions(self, captions):
         """
-        Use the LLM to refine a list of captions.
+        Use the LLM to refine a list of captions iteratively.
         Args:
             captions: List of captions to refine.
         Returns:
@@ -46,14 +48,33 @@ class LLMRefiner:
         """
         refined_captions = []
         for caption in captions:
-            prompt = f"Improve the caption: '{caption}'."
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm_model.device)
-            with torch.no_grad():
-                outputs = self.llm_model.generate(**inputs, max_length=50)
-            print(outputs.shape)
-            refined_caption = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            refined_captions.append(refined_caption)
+            current_caption = caption
+            previous_caption = ""
+            for _ in range(self.max_iterations):
+                prompt = f"Improve the caption: '{current_caption}'."
+                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm_model.device)
+                with torch.no_grad():
+                    outputs = self.llm_model.generate(**inputs, max_length=50)
+                new_caption = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+                # Check stopping criterion
+                if self._caption_change_too_small(current_caption, new_caption) or new_caption == previous_caption:
+                    break
+                
+                previous_caption = current_caption
+                current_caption = new_caption
+            
+            refined_captions.append(current_caption)
         return refined_captions
+
+    def _caption_change_too_small(self, old_caption, new_caption):
+        """
+        Determine if the change between two captions is too small.
+        """
+        old_words = set(old_caption.split())
+        new_words = set(new_caption.split())
+        difference = len(new_words - old_words) / max(len(old_words), 1)
+        return difference < self.tolerance
 
 
 if __name__ == "__main__":
@@ -277,7 +298,8 @@ if __name__ == "__main__":
         logger.logger.info(f'Best caption pre-refine: {best_text}')
 
         # Step 4: Refine captions iteratively
-        llm_refiner = LLMRefiner(llm_model=lm_model, tokenizer=tokenizer)
+        # llm_refiner = LLMRefiner(llm_model=lm_model, tokenizer=tokenizer)
+        llm_refiner = LLMRefiner(llm_model=lm_model, tokenizer=tokenizer, max_iterations=5, tolerance=0.01)
         logger.logger.info(f'Refining captions iteratively')
         refined_caption = llm_refiner.refine_captions([best_text])
 
