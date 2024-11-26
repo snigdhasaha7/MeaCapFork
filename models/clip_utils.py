@@ -143,8 +143,8 @@ class CLIP(nn.Module):
         )
 
         top_k_indices = torch.topk(similarity_scores, top_k).indices
-        top_k_image_paths = [candidate_image_paths[i] for i in top_k_indices]
-        return top_k_image_paths
+        top_k_embeddings = [candidate_embeddings[i] for i in top_k_indices]
+        return top_k_embeddings, query_embedding
     
     def compute_scores(self, image_path, captions):
         """
