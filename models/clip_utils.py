@@ -121,30 +121,85 @@ class CLIP(nn.Module):
         text_embeds = self.model.text_projection(text_embeds)
         return text_embeds
     
-    def compute_image_image_similarity_via_embeddings(self, query_image_path, candidate_image_paths, top_k=5):
+    def compute_image_image_similarity_via_embeddings(self, query_image_path, candidate_image_paths, top_k=5, embedding_path=None):
+        """
+        Compute similarity scores between a query image and candidate images.
+        Use precomputed embeddings if available.
+
+        Args:
+            query_image_path (str): Path to the query image.
+            candidate_image_paths (list): List of paths to candidate images.
+            top_k (int): Number of top similar images to retrieve.
+            embedding_path (str): Path to save/load candidate image embeddings.
+
+        Returns:
+            tuple: (top_k_embeddings, query_embedding)
+        """
+        # Compute query embedding
         query_image = Image.open(query_image_path)
-        query_inputs = self.processor(images=query_image, return_tensors="pt")
-        query_inputs.to(self.device)
+        query_inputs = self.processor(images=query_image, return_tensors="pt").to(self.device)
         with torch.no_grad():
             query_embedding = self.model.get_image_features(**query_inputs)
 
-        candidate_embeddings = []
-        for image_path in candidate_image_paths:
-            image = Image.open(image_path)
-            inputs = self.processor(images=image, return_tensors="pt")
-            inputs.to(self.device)
-            with torch.no_grad():
-                embedding = self.model.get_image_features(**inputs)
-            candidate_embeddings.append(embedding)
+        # Load or compute candidate embeddings
+        if embedding_path and os.path.exists(embedding_path):
+            print(f"Loading precomputed embeddings from {embedding_path}.")
+            candidate_embeddings = torch.load(embedding_path)
+        else:
+            candidate_embeddings = []
+            for image_path in candidate_image_paths:
+                inputs = self.processor(images=Image.open(image_path), return_tensors="pt").to(self.device)
+                with torch.no_grad():
+                    embedding = self.model.get_image_features(**inputs)
+                candidate_embeddings.append(embedding)
+            candidate_embeddings = torch.stack(candidate_embeddings)
+            if embedding_path:
+                torch.save(candidate_embeddings, embedding_path)
+                print(f"Candidate embeddings saved to {embedding_path}.")
 
-        candidate_embeddings = torch.stack(candidate_embeddings).squeeze()
-        similarity_scores = torch.nn.functional.cosine_similarity(
-            query_embedding, candidate_embeddings, dim=-1
-        )
-
+        # Calculate similarity
+        similarity_scores = torch.nn.functional.cosine_similarity(query_embedding, candidate_embeddings, dim=-1)
         top_k_indices = torch.topk(similarity_scores, top_k).indices
-        top_k_embeddings = [candidate_embeddings[i] for i in top_k_indices]
+        top_k_embeddings = candidate_embeddings[top_k_indices]
         return top_k_embeddings, query_embedding
+
+    def save_image_embeddings(self, image_paths, embedding_path):
+        """
+        Save image embeddings for a directory of images.
+
+        Args:
+            image_paths (list): List of image paths.
+            embedding_path (str): Path to save embeddings.
+
+        Returns:
+            None
+        """
+        if os.path.exists(embedding_path):
+            print(f"Embeddings already exist at {embedding_path}. Skipping computation.")
+            return
+
+        embeddings = []
+        for image_path in image_paths:
+            embedding = self.get_clip_embedding(image_path)
+            embeddings.append(embedding)
+
+        stacked_embeddings = torch.stack(embeddings)
+        torch.save(stacked_embeddings, embedding_path)
+        print(f"Embeddings saved to {embedding_path}.")
+
+    def load_image_embeddings(self, embedding_path):
+        """
+        Load precomputed image embeddings.
+
+        Args:
+            embedding_path (str): Path to embeddings file.
+
+        Returns:
+            torch.Tensor: Loaded embeddings.
+        """
+        if not os.path.exists(embedding_path):
+            raise FileNotFoundError(f"Embeddings file not found at {embedding_path}.")
+        return torch.load(embedding_path)
     
     def compute_scores(self, image_path, captions):
         """
