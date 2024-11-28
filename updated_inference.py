@@ -6,8 +6,9 @@ import time
 import os
 import sys
 from args import get_args
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, Qwen2VLForConditionalGeneration, AutoProcessor
 from sentence_transformers import SentenceTransformer
+from qwen_vl_utils import process_vision_info
 
 from models.clip_utils import CLIP  # Updated CLIP class includes compute_scores
 import json
@@ -32,9 +33,12 @@ class LLMRefiner:
     """
     A class to refine captions iteratively using an LLM.
     """
-    def __init__(self, llm_model, tokenizer, max_iterations=5, tolerance=0.01):
-        self.llm_model = llm_model
-        self.tokenizer = tokenizer
+    def __init__(self, refiner_model, processor, image, device, max_iterations=5, tolerance=0.01):
+        self.model = refiner_model
+        self.processor = processor
+        # self.tokenizer = tokenizer
+        self.device = device
+        self.image = image
         self.max_iterations = max_iterations
         self.tolerance = tolerance
 
@@ -51,15 +55,41 @@ class LLMRefiner:
             current_caption = caption
             previous_caption = ""
             for _ in range(self.max_iterations):
-                prompt = f"Improve the caption: '{current_caption}'."
-                # message = [
-                #     {"role": "system", "content": "You are a refiner model. Use your knowledge to refine this caption."},
-                #     {"role": "user", "content": prompt}
-                #     ]
-                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm_model.device)
+                prompt = f"Improve the caption for this image using the details of the image:'{current_caption}'. Return only the text caption."
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "image": self.image,
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ]
+                text = self.processor.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True
+                    )
+                # inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm_model.device)
+                image_inputs, _ = process_vision_info(messages)
+                inputs = self.processor(
+                    text=[text],
+                    images=image_inputs,
+                    videos=None,
+                    padding=True,
+                    return_tensors="pt",
+                )
+                inputs = inputs.to(self.device)
                 with torch.no_grad():
-                    outputs = self.llm_model.generate(**inputs, max_length=50)
-                new_caption = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                    generated_ids = self.model.generate(**inputs, max_new_tokens=50)
+                    generated_ids_trimmed = [
+                        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+                    ]
+                    output_text = self.processor.batch_decode(
+                            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+                        )
+                new_caption = output_text[0]
 
                 # Check stopping criterion
                 if self._caption_change_too_small(current_caption, new_caption) or new_caption == previous_caption:
@@ -106,6 +136,13 @@ if __name__ == "__main__":
     lm_model = BartForTextInfill.from_pretrained(args.lm_model_path)
     lm_model = lm_model.to(device)
     logger.logger.info('Load BartForTextInfill from the checkpoint {}.'.format(args.lm_model_path))
+
+    ## load the refiner model 
+    refiner = "Qwen/Qwen2-VL-7B-Instruct-GPTQ-Int4"
+    refiner_model = Qwen2VLForConditionalGeneration.from_pretrained(
+                refiner, torch_dtype="auto")
+    refiner_model.to(device)
+    refiner_processor = AutoProcessor.from_pretrained(refiner)
 
     vl_model = CLIP(args.vl_model)
     vl_model = vl_model.to(device)
@@ -227,10 +264,10 @@ if __name__ == "__main__":
         top_k_embeddings, query_embedding = vl_model.compute_image_image_similarity_via_embeddings(
             query_image_path=os.path.join(args.img_path, batch_name_list[0]),
             candidate_image_paths=img_data.get_all_image_paths(),
-            top_k=1,
+            top_k=5,
             embedding_path=embedding_save_path
         )
-        logger.logger.info(f"Retrieved top-{1} images")
+        logger.logger.info(f"Retrieved top-{5} images")
 
         # Step 2: Use compute_scores for scoring captions for top-k images
         all_retrieved_texts = []
@@ -245,7 +282,7 @@ if __name__ == "__main__":
             # top_n_indices = torch.topk(scores, args.memory_caption_num).indices
             # top_n_captions = [memory_captions[idx] for idx in top_n_indices]
             # all_retrieved_texts.extend(top_n_captions)
-        logger.logger.info(f'Retrieved concepts for top-{1} images.')
+        logger.logger.info(f'Retrieved concepts for top-{5} images.')
       #  logger.logger.info(f'Retrieved scores for captions for each of top-k images')
 
         # Step 3: Score captions for the query image
@@ -301,13 +338,13 @@ if __name__ == "__main__":
 
         # Step 4: Refine captions iteratively
         # llm_refiner = LLMRefiner(llm_model=lm_model, tokenizer=tokenizer)
-        llm_refiner = LLMRefiner(llm_model=lm_model, tokenizer=tokenizer, max_iterations=5, tolerance=0.01)
+        llm_refiner = LLMRefiner(refiner_model=refiner_model, processor=refiner_processor, image=os.path.join(args.img_path, batch_name_list[0]), device=device, max_iterations=5, tolerance=0.01)
         logger.logger.info(f'Refining captions iteratively')
         refined_caption = llm_refiner.refine_captions([best_text])
 
         logger.logger.info(f'Refined caption: {refined_caption[0]}')
 
-        result_dict[os.path.splitext(batch_name_list[0])[0]] = refined_caption[0]
+        result_dict[os.path.splitext(batch_name_list[0])[0]] = (best_text, refined_caption[0])
 
         logger.logger.info(f'Processed image: {batch_name_list[0]} in {time.time() - start:.2f}s.')
 
